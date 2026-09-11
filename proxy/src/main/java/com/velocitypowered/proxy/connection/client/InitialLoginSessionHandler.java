@@ -71,6 +71,13 @@ public class InitialLoginSessionHandler implements MinecraftSessionHandler {
               "https://sessionserver.mojang.com/session/minecraft/hasJoined")
           .concat("?username=%s&serverId=%s");
 
+  /**
+   * Whether a client Mojang declines to vouch for continues in offline mode instead of being
+   * disconnected. Off unless asked for, so an unflagged build is stock Velocity.
+   */
+  private static final boolean ONLINE_MODE_FALLTHROUGH =
+      Boolean.getBoolean("velocity.online-mode-fallthrough");
+
   private final VelocityServer server;
   private final MinecraftConnection mcConnection;
   private final LoginInboundConnection inbound;
@@ -250,9 +257,18 @@ public class InitialLoginSessionHandler implements MinecraftSessionHandler {
               mcConnection.setActiveSessionHandler(StateRegistry.LOGIN,
                   new AuthSessionHandler(server, inbound, profile, true, serverId));
             } else if (response.statusCode() == 204) {
-              // Apparently an offline-mode user logged onto this online-mode proxy.
-              inbound.disconnect(
-                  Component.translatable("velocity.error.online-mode-only", NamedTextColor.RED));
+              // Mojang answered, and it does not know this client. The encryption exchange
+              // itself completed against our own keypair, so the connection is intact and
+              // there is nothing stopping the login continuing as an offline one - which is
+              // what a plugin deciding between premium and offline players needs.
+              if (ONLINE_MODE_FALLTHROUGH) {
+                mcConnection.setActiveSessionHandler(StateRegistry.LOGIN,
+                    new AuthSessionHandler(server, inbound,
+                        GameProfile.forOfflinePlayer(login.getUsername()), false, null));
+              } else {
+                inbound.disconnect(
+                    Component.translatable("velocity.error.online-mode-only", NamedTextColor.RED));
+              }
             } else {
               // Something else went wrong
               logger.error(
